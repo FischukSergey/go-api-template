@@ -1,0 +1,216 @@
+# https://taskfile.dev
+version: '3'
+
+silent: true
+
+vars:
+  GO_MODULE: github.com/Fisher-Development/woman-app-backend # FIXME сделал
+  GO_FILES:
+    sh: find . -type f -name '*.go' -not -path "./vendor/*" -not -path "./internal/store/*" -not -path "*.gen.go" | tr "\n" " "
+
+  GOLANGCI_LINT_VERSION: v1.61.0
+  GOLANGCI_LINT_CACHE:
+    sh: echo "$HOME/Library/Caches/golangci-lint" # сделал отдельную директорию для кэша
+
+  DEV_TOOLS: >-
+    github.com/daixiang0/gci@v0.10.1
+    mvdan.cc/gofumpt@v0.4.0
+    github.com/kazhuravlev/options-gen/cmd/options-gen@v0.33.2
+  
+  DOCKER_COMPOSE_PATHS: >-
+    -f ./deploy/local/docker-compose.yml --env-file ./deploy/local/.env.local
+
+  DOCKER_COMPOSE_CMD: "docker compose"
+  PROJECT_NAME: "fischuk"
+
+  TYPES: >-
+    MessageID
+    UserID
+    RequestID
+  TYPES_PKG: types
+  TYPES_DST: ./internal/types/types.gen.go
+
+tasks:
+  default:
+    cmds:
+      # Последовательно выполняем таски tidy, fmt, lint, tests и build
+      - task: tidy
+      - task: fmt
+      - task: lint
+      - task: tests
+      - task: build
+
+  tidy:
+    - echo "- Tidy"
+    - go mod tidy
+    - task: vendor
+
+  vendor:
+    - echo "- Vendor"
+    - go mod vendor
+
+  fmt:
+    - echo "- Format"
+    - gofumpt -w {{.GO_FILES}}
+    - gci write --section Standard --section Default --section "Prefix({{.GO_MODULE}})" {{.GO_FILES}}
+
+  lint:
+    cmds:
+      - echo "- Lint"
+      - mkdir -p {{.GOLANGCI_LINT_CACHE}}
+      - task: lint:cmd
+        vars: {CLI_ARGS: "run -v --fix --timeout=5m ./..."}
+
+  lint:cmd: # запуск линтера в контейнере
+    cmds:
+      - |
+        docker run --rm \
+          -v "$(pwd):/app" -w /app \
+          -v "{{.GOLANGCI_LINT_CACHE}}:/root/.cache" \
+          golangci/golangci-lint:{{.GOLANGCI_LINT_VERSION}} \
+          golangci-lint {{.CLI_ARGS}}
+
+  tests:
+    cmds:
+      - echo "- Tests"
+      - go test -race -ldflags=-extldflags=-Wl,-ld_classic ./...
+
+  tests:integration: # интеграционные тесты для keycloak
+    env:
+      TEST_LOG_LEVEL: info
+      TEST_KEYCLOAK_BASE_PATH: https://alex-fisher-team.ru/be
+      TEST_KEYCLOAK_REALM: Woman
+      TEST_KEYCLOAK_CLIENT_ID: integration-testing
+      TEST_KEYCLOAK_CLIENT_SECRET: eFR0yojobxs5QxfrQv53jNHCzdoL1nuZ
+      TEST_KEYCLOAK_TEST_USER: integration-testing
+      TEST_KEYCLOAK_TEST_PASSWORD: integration-testing
+    cmds:
+      - echo "- Integration tests"
+      - go test -tags integration -count 1 -race ./...
+
+  build:
+    cmds:
+      - echo "- Build"
+      - go build ./cmd/main-service
+
+  dev-tools:install: # установка dev-tools в локальный путь
+    desc: "Install development tools"
+    cmds:
+      - echo "- Install dev tools"
+      - |
+        for tool in {{.DEV_TOOLS}}; do 
+          echo "Installing $tool"
+          go install $$tool; 
+        done
+
+  generate: # генерация кода по опциям
+    - echo "Run go generate..."
+    - go generate ./...
+    - task: gen:types
+  gen:types:
+    cmds:
+      - echo "Generate types..."
+      - |
+        TYPES_ARG=$(echo "{{.TYPES}}" | tr ' ' ',' | sed 's/,$//')
+        go run ./cmd/gen-types/main.go {{.TYPES_PKG}} "$TYPES_ARG" {{.TYPES_DST}}
+
+  deploy:up: # запуск сервисов в контейнерах
+    cmds:
+      - '{{.DOCKER_COMPOSE_CMD}} -p {{.PROJECT_NAME}} {{.DOCKER_COMPOSE_PATHS}} up -d'
+
+  deploy:status: # проверка статуса сервисов в контейнерах
+    cmds:
+      - '{{.DOCKER_COMPOSE_CMD}} -p {{.PROJECT_NAME}} {{.DOCKER_COMPOSE_PATHS}} ps'
+
+  deploy:down: # остановка сервисов в контейнерах
+    cmds:
+      - '{{.DOCKER_COMPOSE_CMD}} -p {{.PROJECT_NAME}} {{.DOCKER_COMPOSE_PATHS}} down'
+
+  deploy:stop: # пауза сервисов в контейнерах
+    cmds:
+      - '{{.DOCKER_COMPOSE_CMD}} -p {{.PROJECT_NAME}} {{.DOCKER_COMPOSE_PATHS}} stop'
+
+  deploy:logs: # логи сервисов в контейнерах
+    cmds:
+      - '{{.DOCKER_COMPOSE_CMD}} -p {{.PROJECT_NAME}} {{.DOCKER_COMPOSE_PATHS}} logs -f'
+
+  # === DOCKER DEV ЗАДАЧИ ===
+  docker:build:dev:
+    desc: "Сборка dev образа локально"
+    cmds:
+      - |
+        echo "🔨 Собираем dev образ..."
+        docker build -f dev.Dockerfile -t woman-app:dev .
+        
+        echo "📊 Размер образа:"
+        docker images woman-app:dev
+
+  docker:run:dev:
+    desc: "Запуск dev контейнера с монтированием configs"
+    deps: [docker:build:dev]
+    cmds:
+      - |
+        echo "🚀 Останавливаем старый контейнер (если есть)..."
+        docker stop woman-app-dev 2>/dev/null || true
+        docker rm woman-app-dev 2>/dev/null || true
+        
+        echo "🚀 Запускаем контейнер с configs/config.docker.yaml..."
+        docker run -d \
+          --name woman-app-dev \
+          -p 37545:37545 \
+          -p 33005:33005 \
+          -v $(pwd)/configs:/app/configs:ro \
+          woman-app:dev
+        
+        echo "✅ Контейнер запущен:"
+        echo "   API: http://localhost:37545"
+        echo "   Debug: http://localhost:33005"
+        echo "   Конфиг: configs/config.docker.yaml"
+
+  docker:test:dev:
+    desc: "Тестирование dev контейнера"
+    cmds:
+      - |
+        echo "⏳ Ждем запуска сервиса (3 сек)..."
+        sleep 3
+        
+        echo "🧪 Тестируем API endpoints..."
+        
+        # Health check
+        echo "Тестируем GET /health..."
+        if curl -s -f http://localhost:37545/health >/dev/null 2>&1; then
+          echo "✅ GET /health работает!"
+        else
+          echo "❌ GET /health не работает"
+        fi
+        
+        # Info endpoint  
+        echo "Тестируем GET /info..."
+        if curl -s -f http://localhost:37545/info >/dev/null 2>&1; then
+          echo "✅ GET /info работает!"
+        else
+          echo "❌ GET /info не работает"
+        fi
+        
+        echo "🎉 Тестирование завершено!"
+
+  docker:logs:dev:
+    desc: "Показать логи dev контейнера"
+    cmds:
+      - docker logs -f woman-app-dev
+
+  docker:stop:dev:
+    desc: "Остановить dev контейнер"
+    cmds:
+      - |
+        docker stop woman-app-dev 2>/dev/null || true
+        docker rm woman-app-dev 2>/dev/null || true
+        echo "🛑 Dev контейнер остановлен"
+
+  docker:dev:full:
+    desc: "Полный цикл: сборка -> запуск -> тест"
+    cmds:
+      - task: docker:build:dev
+      - task: docker:run:dev
+      - task: docker:test:dev
+

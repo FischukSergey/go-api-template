@@ -1,0 +1,79 @@
+version: '3'
+
+vars:
+  VPS_HOST: 217.12.37.51
+  VPS_USER: root
+  VPS_PATH: /root/deploy/selectel-test/woman-app-db
+
+tasks:
+  prepare:
+    desc: Create directory for DB on VPS
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "mkdir -p {{.VPS_PATH}}/migrations"
+
+  copy:
+    desc: Copy DB files to VPS
+    deps: [prepare]
+    cmds:
+      - scp ./docker-compose.db.yml {{.VPS_USER}}@{{.VPS_HOST}}:{{.VPS_PATH}}/docker-compose.yml
+      - scp ./.env.test-db {{.VPS_USER}}@{{.VPS_HOST}}:{{.VPS_PATH}}/.env
+      # Удаляем старый init.sql на VPS (если есть)
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "rm -f {{.VPS_PATH}}/init.sql"
+      # Копируем все миграции
+      - scp ./migrations/* {{.VPS_USER}}@{{.VPS_HOST}}:{{.VPS_PATH}}/migrations/
+
+  network:
+    desc: Create Docker network
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "docker network create womanapp_network || true"
+
+  up:
+    desc: Start DB container
+    deps: [copy, network]
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose up -d"
+
+  down:
+    desc: Stop DB container
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose down"
+
+  restart:
+    desc: Restart DB container
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose restart"
+
+  logs:
+    desc: Show DB container logs
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose logs -f"
+
+  ps:
+    desc: Show DB container status
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose ps"
+
+  # Для применения новых миграций нужно пересоздать контейнер
+  migrate:
+    desc: Apply new migrations (recreate container)
+    deps: [copy]
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose down"
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}} "cd {{.VPS_PATH}} && docker-compose up -d"
+
+  # Подключиться к БД для проверки
+  connect:
+    desc: Connect to database
+    cmds:
+      - ssh -t {{.VPS_USER}}@{{.VPS_HOST}} "docker exec -it woman-app-db-dev psql -U \$POSTGRES_USER -d \$POSTGRES_DB"
+#   В psql выполняем:
+#   \i /docker-entrypoint-initdb.d/002_add_user_fields.sql
+
+  # Применить конкретную миграцию
+  apply-migration:
+    desc: Apply specific migration file
+    cmds:
+      - |
+        read -p "Enter migration file name (e.g., 002_add_user_fields.sql): " file
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} "docker exec -i woman-app-db-dev psql -U test -d womanapp_test_db < {{.VPS_PATH}}/migrations/$file"
+  # не забудь поменять имя пользователя и наименование базы в продакшен

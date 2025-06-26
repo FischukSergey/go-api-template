@@ -1,0 +1,410 @@
+version: '3'
+
+vars:
+  VPS_HOST: 217.12.37.51
+  VPS_USER: root
+  VPS_PATH: /root/deploy/selectel-test  # корень проекта где docker-compose.yml
+  CONTAINER_NAME: fischuk_test_keycloak
+  POSTGRES_CONTAINER: fischuk_test_postgres
+  REALM_NAME: Woman
+
+tasks:
+  # === ОСНОВНЫЕ СЕРВИСЫ ===
+  app:start:
+    desc: "Запуск основных сервисов (без Swagger)"
+    cmds:
+      - |
+        echo "🚀 Запускаем основные сервисы..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        docker-compose up -d postgres_test keycloak_test
+        
+        echo "✅ Основные сервисы запущены"
+        EOF
+
+  app:start:with-docs:
+    desc: "Запуск основных сервисов вместе с документацией"
+    cmds:
+      - |
+        echo "🚀 Запускаем все сервисы с документацией..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        # Запускаем основные сервисы
+        docker-compose up -d postgres_test keycloak_test
+        
+        # Запускаем документацию
+        docker-compose -f docker-compose.swagger.yml --profile docs up -d
+        
+        echo "✅ Все сервисы запущены:"
+        echo "🔐 Keycloak: https://alex-fisher-team.ru:33011/be"
+        echo "📖 Swagger: https://alex-fisher-team.ru:33012"
+        EOF
+
+  app:stop:
+    desc: "Остановка всех сервисов"
+    cmds:
+      - |
+        echo "⏹️ Останавливаем все сервисы..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        docker-compose down
+        docker-compose -f docker-compose.swagger.yml down
+        
+        echo "✅ Все сервисы остановлены"
+        EOF
+
+  keycloak:backup:simple:
+    desc: "Бекап realm в один файл"
+    vars:
+      TIMESTAMP: '{{now | date "2006-01-02_15-04-05"}}'
+    cmds:
+      - |
+        echo "📥 Создаем бекап realm: {{.REALM_NAME}}"
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        mkdir -p backups
+        
+        if [ -f test-realm.json ]; then
+          cp test-realm.json backups/test-realm-backup-{{.TIMESTAMP}}.json
+        fi
+        
+        # Экспортируем в ОДИН файл
+        echo "📤 Экспортируем realm {{.REALM_NAME}} в один файл..."
+        docker exec {{.CONTAINER_NAME}} /opt/keycloak/bin/kc.sh export \
+          --file /tmp/export-{{.REALM_NAME}}.json \
+          --realm {{.REALM_NAME}} \
+          --users skip
+        
+        echo "📋 Проверяем созданный файл:"
+        docker exec {{.CONTAINER_NAME}} ls -la /tmp/export-{{.REALM_NAME}}.json
+        
+        # Копируем готовый файл (уже валидный JSON!)
+        docker exec {{.CONTAINER_NAME}} cat /tmp/export-{{.REALM_NAME}}.json > test-realm.json
+        
+        if [ -s test-realm.json ]; then
+          echo "✅ Realm {{.REALM_NAME}} экспортирован ($(wc -c < test-realm.json) байт)"
+          echo "📄 Проверяем JSON:"
+          head -2 test-realm.json
+        else
+          echo "❌ Файл test-realm.json пустой!"
+        fi
+        EOF
+
+  keycloak:backup:all-realms:
+    desc: "Бекап всех realm'ов в один файл"
+    vars:
+      TIMESTAMP: '{{now | date "2006-01-02_15-04-05"}}'
+    cmds:
+      - |
+        echo "📥 Создаем бекап ВСЕХ realm'ов..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        mkdir -p backups
+        
+        if [ -f test-realm.json ]; then
+          cp test-realm.json backups/test-realm-backup-{{.TIMESTAMP}}.json
+        fi
+        
+        # Экспортируем ВСЕ realm'ы в ОДИН файл
+        echo "📤 Экспортируем все realm'ы в один файл..."
+        docker exec {{.CONTAINER_NAME}} /opt/keycloak/bin/kc.sh export \
+          --file /tmp/export-all-realms.json \
+          --users skip
+        
+        echo "📋 Проверяем созданный файл:"
+        docker exec {{.CONTAINER_NAME}} ls -la /tmp/export-all-realms.json
+        
+        # Копируем готовый файл
+        docker exec {{.CONTAINER_NAME}} cat /tmp/export-all-realms.json > test-realm.json
+        
+        if [ -s test-realm.json ]; then
+          echo "✅ Все realm'ы экспортированы ($(wc -c < test-realm.json) байт)"
+          echo "📄 Структура файла:"
+          head -5 test-realm.json
+        else
+          echo "❌ Файл test-realm.json пустой!"
+        fi
+        EOF
+
+  keycloak:backup:with-users:
+    desc: "Бекап с пользователями в один файл"
+    vars:
+      TIMESTAMP: '{{now | date "2006-01-02_15-04-05"}}'
+      REALM_NAME: '{{.REALM_NAME | default "master"}}'
+    cmds:
+      - |
+        echo "📥 Создаем полный бекап realm: {{.REALM_NAME}} (с пользователями)"
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        mkdir -p backups
+        
+        # Экспортируем С пользователями в один файл
+        echo "📤 Экспортируем realm {{.REALM_NAME}} с пользователями..."
+        docker exec {{.CONTAINER_NAME}} /opt/keycloak/bin/kc.sh export \
+          --file /tmp/export-{{.REALM_NAME}}-full.json \
+          --realm {{.REALM_NAME}} \
+          --users realm_file
+        
+        # Сохраняем полный бекап в архив
+        docker exec {{.CONTAINER_NAME}} cat /tmp/export-{{.REALM_NAME}}-full.json > backups/realm-{{.REALM_NAME}}-full-{{.TIMESTAMP}}.json
+        
+        # Для автоимпорта создаем версию без пользователей
+        docker exec {{.CONTAINER_NAME}} /opt/keycloak/bin/kc.sh export \
+          --file /tmp/export-{{.REALM_NAME}}-config.json \
+          --realm {{.REALM_NAME}} \
+          --users skip
+        
+        docker exec {{.CONTAINER_NAME}} cat /tmp/export-{{.REALM_NAME}}-config.json > test-realm.json
+        
+        echo "✅ Полный бекап создан:"
+        echo "- С пользователями: backups/realm-{{.REALM_NAME}}-full-{{.TIMESTAMP}}.json"
+        echo "- Для автоимпорта: test-realm.json"
+        EOF
+
+  keycloak:backup:db:
+    desc: "Бекап базы данных PostgreSQL"
+    vars:
+      TIMESTAMP: '{{now | date "2006-01-02_15-04-05"}}'
+    cmds:
+      - |
+        echo "💾 Создаем бекап базы данных..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}  # Исправлено
+        mkdir -p backups
+        
+        echo "📤 Экспортируем базу данных..."
+        docker exec {{.POSTGRES_CONTAINER}} pg_dump -U ${POSTGRES_USER} ${POSTGRES_DB} \
+          > backups/postgres-backup-{{.TIMESTAMP}}.sql
+        
+        echo "✅ Бекап БД создан: backups/postgres-backup-{{.TIMESTAMP}}.sql"
+        EOF
+
+  keycloak:restart:
+    desc: "Перезапуск Keycloak на VPS"
+    cmds:
+      - |
+        echo "🔄 Перезапускаем Keycloak..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}  # Корень проекта с docker-compose.yml
+        
+        docker restart {{.CONTAINER_NAME}}
+        
+        echo "⏳ Ожидаем запуска..."
+        sleep 20
+        
+        echo "📋 Проверяем статус:"
+        docker ps | grep keycloak
+        
+        echo "📜 Последние логи (ищем импорт):"
+        docker logs {{.CONTAINER_NAME}} --tail 10 | grep -i import || echo "Логи импорта не найдены"
+        
+        echo "🌐 Keycloak доступен: https://alex-fisher-team.ru/be"
+        EOF
+
+  keycloak:logs:
+    desc: "Просмотр логов Keycloak"
+    cmds:
+      - |
+        echo "📋 Логи Keycloak:"
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} "docker logs {{.CONTAINER_NAME}} --tail 30"
+
+  keycloak:status:
+    desc: "Статус системы на VPS"
+    cmds:
+      - |
+        echo "=== 🚀 Статус системы на VPS root@217.12.37.51 ==="
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}  # Исправлено
+        
+        echo "📦 Контейнеры:"
+        docker ps | grep -E "(keycloak|postgres)" || echo "❌ Контейнеры не запущены"
+        
+        echo -e "\n📄 Файлы конфигурации:"
+        ls -la test-realm.json 2>/dev/null || echo "❌ test-realm.json не найден"
+        ls -la docker-compose.yml 2>/dev/null || echo "❌ docker-compose.yml не найден"
+        ls -la .env.test 2>/dev/null || echo "❌ .env.test не найден"
+        
+        echo -e "\n📁 Архивные бекапы:"
+        ls -la backups/ 2>/dev/null | tail -5 || echo "❌ Папка backups не найдена"
+        
+        echo -e "\n💾 Использование места:"
+        du -sh backups/ 2>/dev/null || echo "Нет бекапов"
+        
+        echo -e "\n📍 Текущая папка:"
+        pwd
+        ls -la
+        EOF
+        
+        echo -e "\n🌐 Проверяем доступность:"
+        curl -s -I https://alex-fisher-team.ru/be | head -1 || echo "❌ Сервис недоступен"
+
+  keycloak:backup:full:
+    desc: "Полный бекап: конфигурация + БД"
+    cmds:
+      - task: keycloak:backup:simple
+      - task: keycloak:backup:db
+      - |
+        echo "📦 Полный бекап завершен!"
+        echo "🔄 Перезапустите для применения: task keycloak:restart"
+
+  keycloak:restore:
+    desc: "Восстановление из архивного бекапа"
+    vars:
+      BACKUP_FILE: '{{.BACKUP_FILE}}'
+    cmds:
+      - |
+        if [ -z "{{.BACKUP_FILE}}" ]; then
+          echo "❌ Укажите файл бекапа:"
+          echo "Пример: task keycloak:restore BACKUP_FILE=test-realm-backup-2024-01-15_14-30-00.json"
+          echo ""
+          echo "Доступные бекапы на VPS:"
+          ssh {{.VPS_USER}}@{{.VPS_HOST}} "ls -1 {{.VPS_PATH}}/backups/*realm*.json 2>/dev/null" || echo "Нет бекапов"
+          exit 1
+        fi
+      - |
+        echo "🔄 Восстанавливаем из: {{.BACKUP_FILE}}"
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}  # Исправлено
+        
+        if [ ! -f "backups/{{.BACKUP_FILE}}" ]; then
+          echo "❌ Файл не найден: backups/{{.BACKUP_FILE}}"
+          exit 1
+        fi
+        
+        cp "backups/{{.BACKUP_FILE}}" test-realm.json
+        echo "✅ Файл восстановлен"
+        echo "🔄 Перезапустите контейнер: task keycloak:restart"
+        EOF
+
+  keycloak:clean:old-backups:
+    desc: "Очистка старых бекапов (старше 30 дней)"
+    cmds:
+      - |
+        echo "🗑️ Очищаем старые бекапы..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}/backups  # Исправлено
+        
+        echo "Удаляем файлы старше 30 дней:"
+        find . -name "*.json" -o -name "*.sql" -mtime +30 -print -delete
+        
+        echo "✅ Очистка завершена"
+        EOF
+
+  vps:check-structure:
+    desc: "Проверка структуры папок на VPS"
+    cmds:
+      - |
+        echo "📁 Проверяем структуру проекта на VPS..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        echo "📍 Корень проекта: {{.VPS_PATH}}"
+        cd {{.VPS_PATH}}
+        ls -la
+        
+        echo -e "\n📄 Основные файлы:"
+        echo "docker-compose.yml: $([ -f docker-compose.yml ] && echo '✅' || echo '❌')"
+        echo ".env.test: $([ -f .env.test ] && echo '✅' || echo '❌')"
+        echo "test-realm.json: $([ -f test-realm.json ] && echo '✅' || echo '❌')"
+        echo "init.sql: $([ -f init.sql ] && echo '✅' || echo '❌')"
+        EOF
+
+  vps:connect:
+    desc: "Подключение к VPS"
+    cmds:
+      - ssh {{.VPS_USER}}@{{.VPS_HOST}}
+
+  vps:test:
+    desc: "Тест соединения с VPS"
+    cmds:
+      - |
+        echo "🔍 Тестируем соединение с VPS..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} "echo '✅ Соединение с VPS установлено успешно' && whoami && pwd"
+
+  # === КОПИРОВАНИЕ КОНФИГОВ ===
+  config:copy:
+    desc: "Копирование config.docker.yaml на VPS"
+    cmds:
+      - |
+        echo "📁 Копируем config.docker.yaml на VPS..."
+        
+        # Проверяем существование локального файла
+        if [ ! -f ../../configs/config.docker.yaml ]; then
+          echo "❌ Файл ../../configs/config.docker.yaml не найден!"
+          echo "💡 Создайте его на основе configs/config.example.yaml"
+          exit 1
+        fi
+        
+        # Создаем папку configs на VPS
+        echo "📂 Создаем папку configs на VPS..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} "mkdir -p {{.VPS_PATH}}/configs"
+        
+        # Копируем на VPS
+        echo "📤 Копируем файл..."
+        scp ../../configs/config.docker.yaml {{.VPS_USER}}@{{.VPS_HOST}}:{{.VPS_PATH}}/configs/
+        
+        echo "✅ Конфиг скопирован"
+
+  config:check:
+    desc: "Проверить конфиг на VPS"
+    cmds:
+      - |
+        echo "🔍 Проверяем конфиг на VPS..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        if [ -f configs/config.docker.yaml ]; then
+          echo "✅ Конфиг найден: configs/config.docker.yaml"
+          echo "📊 Размер: $(wc -c < configs/config.docker.yaml) байт"
+          echo "📅 Дата изменения: $(stat -c %y configs/config.docker.yaml)"
+        else
+          echo "❌ Конфиг не найден: configs/config.docker.yaml"
+          echo "💡 Выполните: task config:copy"
+        fi
+        EOF
+
+  config:view:
+    desc: "Показать содержимое конфига на VPS"
+    cmds:
+      - |
+        echo "👁️ Содержимое config.docker.yaml на VPS:"
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        if [ -f configs/config.docker.yaml ]; then
+          cat configs/config.docker.yaml
+        else
+          echo "❌ Файл configs/config.docker.yaml не найден"
+        fi
+        EOF
+
+  config:backup:
+    desc: "Создать бекап текущего конфига на VPS"
+    vars:
+      TIMESTAMP: '{{now | date "2006-01-02_15-04-05"}}'
+    cmds:
+      - |
+        echo "💾 Создаем бекап конфига..."
+        ssh {{.VPS_USER}}@{{.VPS_HOST}} << 'EOF'
+        cd {{.VPS_PATH}}
+        
+        if [ -f configs/config.docker.yaml ]; then
+          mkdir -p configs/backups
+          cp configs/config.docker.yaml configs/backups/config.docker.yaml.{{.TIMESTAMP}}
+          echo "✅ Бекап создан: configs/backups/config.docker.yaml.{{.TIMESTAMP}}"
+        else
+          echo "❌ Файл configs/config.docker.yaml не найден"
+        fi
+        EOF
+
+  # === КОМБИНИРОВАННЫЕ ЗАДАЧИ ===
+  deploy:prepare:
+    desc: "Подготовка к деплою (копирование конфига + бекап)"
+    cmds:
+      - task: config:backup
+      - task: config:copy
+      - task: config:check

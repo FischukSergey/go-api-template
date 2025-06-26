@@ -1,0 +1,27 @@
+services:
+  woman-app-be:
+    container_name: woman-app-be-dev
+    image: cr.selcloud.ru/woman-app-be/dev:latest
+    restart: always
+    ports:
+      - "0.0.0.0:37545:37545"
+      - "0.0.0.0:33005:33005"
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./logs:/app/logs
+      - ./docs:/app/docs:ro
+      - ./swagger-ui-config:/app/swagger-ui-config:ro
+    environment:
+      - CONFIG_PATH=/app/configs/config.docker.yaml
+    command: ["./main-service", "-config", "/app/configs/config.docker.yaml"]
+    networks:
+      - fischuk_test_network
+      - womanapp_network
+
+networks:
+  fischuk_test_network:
+    name: fischuk_test_network
+    external: true 
+  womanapp_network:
+    name: womanapp_network
+    external: true 

@@ -1,0 +1,108 @@
+name: Docker Image CI Develop
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - dev
+#  pull_request:
+#    branches:
+#      - dev
+
+env:
+  # Docker Registry
+  REGISTRY: cr.selcloud.ru
+  IMAGE_NAME: woman-app-be/dev
+  IMAGE_TAG: latest
+  
+  # VPS Configuration (убираем HOST и USER)
+  VPS_PATH: /root/deploy/selectel-test
+  
+  # Application Configuration
+  APP_CONTAINER_NAME: woman-app-be-dev
+  COMPOSE_FILE: docker-compose.dev.yaml
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: 'dev'
+
+      - name: Log in to Selectel Registry
+        env:
+          SELECTEL_REGISTRY_TOKEN: ${{ secrets.SELECTEL_REGISTRY_TOKEN }}
+          SELECTEL_REGISTRY_USERNAME: ${{ secrets.SELECTEL_REGISTRY_USERNAME }}
+        run: |
+          echo "$SELECTEL_REGISTRY_TOKEN" | docker login ${{ env.REGISTRY }} -u "$SELECTEL_REGISTRY_USERNAME" --password-stdin
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./dev.Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy docker-compose files
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.VPS_HOST }}       # ← Используем secrets
+          username: ${{ secrets.VPS_USER }}   # ← Используем secrets
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "deploy/dev/"
+          strip_components: 2
+          target: ${{ env.VPS_PATH }}
+
+      - name: Deploy to Selectel Cloud
+        uses: appleboy/ssh-action@v0.1.5
+        env:
+          FULL_IMAGE_NAME: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          SELECTEL_REGISTRY_TOKEN: ${{ secrets.SELECTEL_REGISTRY_TOKEN }}
+          SELECTEL_REGISTRY_USERNAME: ${{ secrets.SELECTEL_REGISTRY_USERNAME }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: FULL_IMAGE_NAME,SELECTEL_REGISTRY_TOKEN,SELECTEL_REGISTRY_USERNAME
+          script: | 
+            cd ${{ env.VPS_PATH }}
+            
+            # Проверяем наличие конфига
+            if [ ! -f configs/config.docker.yaml ]; then
+              echo "❌ configs/config.docker.yaml не найден!"
+              echo "💡 Выполните: task config:copy из deploy/dev/"
+              exit 1
+            fi
+            
+            # ЛОГИНИМСЯ В REGISTRY НА VPS
+            echo "$SELECTEL_REGISTRY_TOKEN" | docker login ${{ env.REGISTRY }} -u "$SELECTEL_REGISTRY_USERNAME" --password-stdin
+            
+            # Создаем директории
+            mkdir -p logs configs
+            chmod -R 755 logs
+
+            # Graceful shutdown
+            docker compose -f ${{ env.COMPOSE_FILE }} down || true
+
+            # Удаляем старые образы
+            docker image rm $FULL_IMAGE_NAME || true
+
+            # Обновляем образы
+            docker compose -f ${{ env.COMPOSE_FILE }} pull
+
+            # Запуск контейнеров
+            docker compose -f ${{ env.COMPOSE_FILE }} up -d
+            
+            echo "🎉 Деплой завершен!"
+            docker ps | grep woman-app-be-dev 

@@ -1,0 +1,37 @@
+# Minimal example config for testing
+global:
+    env: dev
+
+log:
+    level: debug
+    
+servers:
+    debug:
+      addr: localhost:33000
+    client:
+      addr: localhost:38080
+      allow_origins:
+        - "*"
+        #- "http://localhost:3000"
+
+storage:
+    db_name: "womanapp_test"
+    db_user: "test"
+    db_password: "test"
+    db_host: "localhost"
+    db_port: "5432"
+    db_ssl_mode: "disable"
+
+clients:
+  keycloak:
+    base_path: "https://alex-fisher-team.ru/be"
+    realm: "Woman"
+    client_id: "back-end"
+    client_secret: "secret"
+    debug_mode: false
+  keycloak_admin:
+    base_path: "https://alex-fisher-team.ru/be"
+    realm: "Woman"
+    client_id: "woman-app-admin"
+    client_secret: "admin-secret"
+    debug_mode: false

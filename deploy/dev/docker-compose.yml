@@ -1,0 +1,67 @@
+services:
+  postgres_test:
+    container_name: fischuk_test_postgres
+    image: postgres:15-alpine
+    env_file:
+      - .env.test
+    environment:
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - fischuk_test_postgresql_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "127.0.0.1:35433:5432" # PostgreSQL остается доступным только локально для безопасности
+    networks:
+      - fischuk_test_network
+    restart: always
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keycloak_test:
+    container_name: fischuk_test_keycloak
+    image: quay.io/keycloak/keycloak:21.0.2
+    env_file:
+      - .env.test
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+    command:
+      - start-dev
+      - --import-realm
+    environment:
+      - DB_VENDOR=POSTGRES
+      - DB_ADDR=postgres_test
+      - DB_SCHEMA=public
+      - KC_PROXY=edge
+#      - KC_HOSTNAME=woman-app.alex-fisher-team.ru
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=true
+      - KC_HTTP_RELATIVE_PATH=/be
+    volumes:
+      - ./test-realm.json:/opt/keycloak/data/import/realm.json
+    ports:
+      - "33011:8080" # Используем другой порт для изоляции
+    networks:
+      - fischuk_test_network
+    restart: always
+
+  # Swagger сервисы запускаются отдельно
+  # swagger-ui:
+  #   extends:
+  #     file: docker-compose.swagger.yml
+  #     service: swagger-ui
+  #   profiles:
+  #     - with-docs
+
+volumes:
+  fischuk_test_postgresql_data:
+    name: fischuk_test_postgresql_data
+
+networks:
+  fischuk_test_network:
+    name: fischuk_test_network
+    driver: bridge
+    external: false

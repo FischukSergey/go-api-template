@@ -1,0 +1,460 @@
+openapi: 3.0.3
+info:
+  title: Woman App API
+  description: API документация для Woman App
+  version: 1.0.0
+  contact:
+    name: Alex Fisher Team
+    url: https://alex-fisher-team.ru
+
+servers:
+  - url: http://localhost:38080
+    description: Local development server
+  - url: http://localhost:37545
+    description: Docker development server
+  - url: http://217.12.37.51:37545  # Замените на ваш домен
+    description: VPS development server
+  - url: https://alex-fisher-team.ru/api/v1
+    description: Production server
+
+security:
+  - KeycloakAuth: []
+
+components:
+  securitySchemes:
+    KeycloakAuth:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://alex-fisher-team.ru/be/realms/Woman/protocol/openid-connect/auth
+          tokenUrl: https://alex-fisher-team.ru/be/realms/Woman/protocol/openid-connect/token
+          scopes:
+            openid: OpenID Connect
+            profile: User profile
+            email: User email
+
+  schemas:
+    # Схемы ответов
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "ok"
+        service:
+          type: string
+          example: "woman-app-api"
+        time:
+          type: string
+          format: date-time
+
+    InfoResponse:
+      type: object
+      properties:
+        service:
+          type: string
+          example: "woman-app-api"
+        version:
+          type: string
+          example: "1.0.0"
+        keycloak:
+          type: string
+          example: "enabled"
+        endpoints:
+          type: array
+          items:
+            type: string
+
+    PingResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "pong"
+        time:
+          type: string
+          format: date-time
+
+    VersionResponse:
+      type: object
+      properties:
+        version:
+          type: string
+          example: "1.0.0"
+        build_time:
+          type: string
+          example: "dev"
+        go_version:
+          type: string
+          example: "1.23.8"
+
+    ProfileResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "User profile data"
+        user:
+          type: object
+          description: "Данные пользователя из Keycloak"
+
+    DashboardResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Dashboard for authenticated user"
+        user:
+          type: object
+          description: "Данные пользователя"
+        widgets:
+          type: array
+          items:
+            type: string
+          example: ["cycle_tracker", "symptoms", "recommendations"]
+
+    # User схемы
+    UserResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "status: ok"
+
+    UserDashboardResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Dashboard for authenticated user"
+        user:
+          type: object
+          description: "Данные пользователя"
+        widgets:
+          type: array
+          items:
+            type: string
+          example: ["email", "first_name", "birth_date"]
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        firstName:
+          type: string
+          example: "John"
+        lastName:
+          type: string
+          example: "Doe"
+        sex:
+          type: string
+          example: "male"
+        city:
+          type: string
+          example: "New York"
+        country:
+          type: string
+          example: "USA"
+        birthDate:
+          type: string
+          example: "1990-01-01"
+
+    # Auth схемы - ПЕРЕНЕСЕНЫ ВНУТРЬ components/schemas
+    AuthRegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          example: "test@example.com"
+        password:
+          type: string
+          example: "password"
+
+    AuthLoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          example: "test@example.com"
+        password:
+          type: string
+          example: "password"
+
+    AuthLoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          example: "accessToken"
+        refreshToken:
+          type: string
+          example: "refreshToken"
+        expiresIn:
+          type: integer
+          example: 300
+
+    AuthRegisterResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "registered"
+
+    AuthRefreshRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          example: "refreshToken"
+
+    AuthRefreshResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+          example: "accessToken"
+        refreshToken:
+          type: string
+          example: "refreshToken"
+        expiresIn:
+          type: integer
+          example: 300
+
+paths:
+  # Системные эндпоинты (без авторизации)
+  /health:
+    get:
+      summary: Health check
+      description: Проверка состояния сервиса
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /info:
+    get:
+      summary: Service info
+      description: Информация о сервисе и его конфигурации
+      tags: [System]
+      security: []
+      responses:
+        '200':
+          description: Service information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfoResponse'
+
+  # Публичные API эндпоинты
+  /api/v1/ping:
+    get:
+      summary: Ping endpoint
+      description: Простой ping-pong эндпоинт для проверки связи
+      tags: [Public]
+      security: []
+      responses:
+        '200':
+          description: Pong response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PingResponse'
+
+  /api/v1/version:
+    get:
+      summary: API version
+      description: Информация о версии API
+      tags: [Public]
+      security: []
+      responses:
+        '200':
+          description: Version information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+
+  # Защищенные эндпоинты (требуют авторизации)
+  /api/v1/profile:
+    get:
+      summary: Profile
+      description: Получение системного профиля
+      tags: [Info]
+      security:
+        - KeycloakAuth: ["openid", "profile"]
+      responses:
+        '200':
+          description: User profile data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  /api/v1/dashboard:
+    get:
+      summary: Dashboard
+      description: Получение системного дашборда
+      tags: [Info]
+      security:
+        - KeycloakAuth: ["openid", "profile"]
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  # Эндпоинты для работы с пользователями
+  /api/v1/user/update:
+    put:
+      summary: Update user
+      description: Обновление данных пользователя
+      tags: [User]
+      security:
+        - KeycloakAuth: ["openid", "profile"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '409':
+          description: Conflict
+        '500':
+          description: Internal Server Error
+
+  /api/v1/user/dashboard:
+    get:
+      summary: User dashboard
+      description: Получение данных дашборда пользователя
+      tags: [User]
+      security:
+        - KeycloakAuth: ["openid", "profile"]
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDashboardResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+
+  # Auth эндпоинты
+  /api/v1/auth/register:
+    post:
+      summary: Register user
+      description: Регистрация нового пользователя
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRegisterRequest'
+      responses:
+        '200':
+          description: User registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthRegisterResponse'
+        '400':
+          description: Bad Request
+        '409':
+          description: Conflict
+        '500':
+          description: Internal Server Error
+
+  /api/v1/auth/login:
+    post:
+      summary: Login user
+      description: Логин пользователя
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthLoginRequest'
+      responses:
+        '200':
+          description: User logged in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginResponse'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal Server Error
+
+  /api/v1/auth/refresh:
+    post:
+      summary: Refresh token
+      description: Обновление токена
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRefreshRequest'
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthRefreshResponse'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal Server Error
+
+tags:
+  - name: System
+    description: Системные эндпоинты для мониторинга
+  - name: Public
+    description: Публичные эндпоинты, не требующие авторизации
+  - name: Info
+    description: Пользовательские эндпоинты, требующие авторизации
+  - name: User
+    description: Эндпоинты для работы с пользователями (требуют авторизации)
+  - name: Auth
+    description: Эндпоинты для работы с авторизацией
