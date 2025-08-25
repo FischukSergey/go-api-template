@@ -41,7 +41,7 @@ services:
       - KC_HOSTNAME_STRICT_HTTPS=true
       - KC_HTTP_RELATIVE_PATH=/be
     volumes:
-      - ./test-realm.json:/opt/keycloak/data/import/realm.json
+      - ./test-realm.json:/opt/keycloak/data/import # здесь надо монтировать папку а не файл /realm.json и еще надо поправить таску
     ports:
       - "33011:8080" # Используем другой порт для изоляции
     networks:
